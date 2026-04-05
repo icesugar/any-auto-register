@@ -36,7 +36,7 @@ class KiroPlatform(BasePlatform):
 
         if self.mailbox:
             mailbox = self.mailbox
-            mail_acct = mailbox.get_email()
+            mail_acct = mailbox.acquire_email()
             if not mail_acct:
                 raise RuntimeError("未获取到可用邮箱账号")
             email = email or mail_acct.email

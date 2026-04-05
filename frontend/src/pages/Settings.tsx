@@ -81,6 +81,8 @@ const TAB_ITEMS = [
         desc: '选择注册时使用的邮箱类型',
         fields: [
           { key: 'mail_provider', label: '邮箱服务', type: 'select' },
+          { key: 'mailbox_get_retry_count', label: '获取邮箱重试次数', placeholder: '默认 2，表示首次失败后额外重试 2 次' },
+          { key: 'mailbox_get_retry_wait_seconds', label: '重试等待时间（秒）', placeholder: '默认 2' },
           { key: 'mailbox_otp_timeout_seconds', label: '邮箱验证码等待秒数', placeholder: '例如 60 / 90 / 120' },
         ],
       },
@@ -1759,6 +1761,16 @@ export default function Settings() {
     apiFetch('/config').then((data) => {
       if (!data.mail_provider) {
         data.mail_provider = 'luckmail'
+      }
+      if (data.mailbox_get_retry_count === undefined || data.mailbox_get_retry_count === null || data.mailbox_get_retry_count === '') {
+        data.mailbox_get_retry_count = '2'
+      }
+      if (
+        data.mailbox_get_retry_wait_seconds === undefined ||
+        data.mailbox_get_retry_wait_seconds === null ||
+        data.mailbox_get_retry_wait_seconds === ''
+      ) {
+        data.mailbox_get_retry_wait_seconds = '2'
       }
       if (!data.applemail_base_url) {
         data.applemail_base_url = 'https://www.appleemail.top'

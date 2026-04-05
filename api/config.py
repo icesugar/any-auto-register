@@ -35,6 +35,8 @@ CONFIG_KEYS = [
     "cloudmail_timeout",
     "mail_provider",
     "mailbox_otp_timeout_seconds",
+    "mailbox_get_retry_count",
+    "mailbox_get_retry_wait_seconds",
     "maliapi_base_url",
     "maliapi_api_key",
     "maliapi_domain",
@@ -116,6 +118,10 @@ def get_config():
     all_cfg = config_store.get_all()
     if not all_cfg.get("mail_provider"):
         all_cfg["mail_provider"] = "luckmail"
+    if not all_cfg.get("mailbox_get_retry_count"):
+        all_cfg["mailbox_get_retry_count"] = "2"
+    if not all_cfg.get("mailbox_get_retry_wait_seconds"):
+        all_cfg["mailbox_get_retry_wait_seconds"] = "2"
     if not all_cfg.get("applemail_base_url"):
         all_cfg["applemail_base_url"] = "https://www.appleemail.top"
     if not all_cfg.get("applemail_pool_dir"):

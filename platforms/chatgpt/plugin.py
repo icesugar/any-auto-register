@@ -91,7 +91,7 @@ class ChatGPTPlatform(BasePlatform):
                 def create_email(self, config=None):
                     if self._email and self._acct and _fixed_email:
                         return {"email": self._email, "service_id": self._acct.account_id, "token": ""}
-                    self._acct = _mailbox.get_email()
+                    self._acct = _mailbox.acquire_email()
                     get_current_ids = getattr(_mailbox, "get_current_ids", None)
                     if callable(get_current_ids):
                         self._before_ids = set(get_current_ids(self._acct) or [])

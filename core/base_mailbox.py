@@ -24,6 +24,18 @@ class BaseMailbox(ABC):
         if callable(log_fn):
             log_fn(message)
 
+    def _coerce_retry_count(self, value: Any, default: int = 2) -> int:
+        try:
+            return max(int(str(value).strip()), 0)
+        except (TypeError, ValueError):
+            return default
+
+    def _coerce_retry_wait_seconds(self, value: Any, default: float = 2.0) -> float:
+        try:
+            return max(float(str(value).strip()), 0.0)
+        except (TypeError, ValueError):
+            return default
+
     def _checkpoint(self, *, consume_skip: bool = True) -> None:
         task_control = getattr(self, "_task_control", None)
         if task_control is None:
@@ -70,6 +82,31 @@ class BaseMailbox(ABC):
     def get_email(self) -> MailboxAccount:
         """获取一个可用邮箱"""
         ...
+
+    def acquire_email(self) -> MailboxAccount:
+        from .config_store import config_store
+
+        retry_count = self._coerce_retry_count(
+            config_store.get("mailbox_get_retry_count", "2")
+        )
+        wait_seconds = self._coerce_retry_wait_seconds(
+            config_store.get("mailbox_get_retry_wait_seconds", "2")
+        )
+        total_attempts = retry_count + 1
+
+        for attempt in range(1, total_attempts + 1):
+            self._checkpoint()
+            try:
+                return self.get_email()
+            except Exception as exc:
+                if attempt >= total_attempts:
+                    raise
+                self._log(
+                    f"[Mailbox] 获取邮箱失败，{wait_seconds:g} 秒后进行第 {attempt}/{retry_count} 次重试: {exc}"
+                )
+                self._sleep_with_checkpoint(wait_seconds)
+
+        raise RuntimeError("获取邮箱失败")
 
     @abstractmethod
     def wait_for_code(

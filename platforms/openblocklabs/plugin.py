@@ -21,7 +21,7 @@ class OpenBlockLabsPlatform(BasePlatform):
         log = getattr(self, '_log_fn', print)
         proxy = self.config.proxy
 
-        mail_acct = self.mailbox.get_email() if self.mailbox else None
+        mail_acct = self.mailbox.acquire_email() if self.mailbox else None
         email = email or (mail_acct.email if mail_acct else None)
         log(f"邮箱: {email}")
         before_ids = self.mailbox.get_current_ids(mail_acct) if mail_acct else set()

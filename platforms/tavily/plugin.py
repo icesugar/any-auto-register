@@ -77,7 +77,7 @@ class TavilyPlatform(BasePlatform):
             return self._register_browser(email, password)
 
         mailbox = self.mailbox
-        mail_acct = mailbox.get_email() if mailbox else None
+        mail_acct = mailbox.acquire_email() if mailbox else None
         email = email or (mail_acct.email if mail_acct else "")
         if not email:
             raise RuntimeError("未获取到可用邮箱")

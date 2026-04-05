@@ -22,7 +22,7 @@ class CursorPlatform(BasePlatform):
 
         reg = CursorRegister(proxy=proxy, log_fn=log)
 
-        mail_acct = self.mailbox.get_email() if self.mailbox else None
+        mail_acct = self.mailbox.acquire_email() if self.mailbox else None
         email = email or (mail_acct.email if mail_acct else None)
         before_ids = self.mailbox.get_current_ids(mail_acct) if mail_acct else set()
         otp_timeout = self.get_mailbox_otp_timeout()
