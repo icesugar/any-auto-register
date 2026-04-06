@@ -2926,6 +2926,7 @@ class LuckMailMailbox(BaseMailbox):
         self._email = email
         self._token = token
         self._purchase_id = 0
+        self._ensure_token_alive(token, email)
         self._log(f"[LuckMail(token)] 从邮箱池取出: {email}")
         return MailboxAccount(
             email=email,
@@ -2983,6 +2984,30 @@ class LuckMailMailbox(BaseMailbox):
             self._log(f"[LuckMail] 已取消订单: {order_no}")
         except Exception:
             pass
+
+    def _ensure_token_alive(self, token: str, email: str = "") -> None:
+        resolved_token = str(token or "").strip()
+        if not resolved_token:
+            raise RuntimeError("LuckMail 缺少 token，无法检测邮箱可用性")
+
+        try:
+            result = self._client.user.check_token_alive(resolved_token)
+        except Exception as e:
+            raise RuntimeError(f"LuckMail 检测邮箱可用性失败: {e}") from e
+
+        if not getattr(result, "alive", False):
+            detail = (
+                str(getattr(result, "message", "") or "").strip()
+                or str(getattr(result, "status", "") or "").strip()
+                or "alive=false"
+            )
+            raise RuntimeError(f"LuckMail 邮箱不可用: {detail}")
+
+        resolved_email = str(email or getattr(result, "email_address", "") or "").strip()
+        if resolved_email:
+            self._log(f"[LuckMail] 邮箱可用性检测通过: {resolved_email}")
+        else:
+            self._log("[LuckMail] 邮箱可用性检测通过")
 
     def _should_manage_result_tags(self) -> bool:
         return not self._token_mode and not self._has_token_pool()
@@ -3128,6 +3153,7 @@ class LuckMailMailbox(BaseMailbox):
                 self._purchase_id = 0
             self._email = email
             self._token = token
+            self._ensure_token_alive(token, email)
             self._log(f"[LuckMail] 已购邮箱: {email}")
             if item.get("warranty_until"):
                 self._log(f"[LuckMail] 质保到期: {item.get('warranty_until')}")

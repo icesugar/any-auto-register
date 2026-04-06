@@ -104,6 +104,10 @@ class LuckMailMailboxTests(unittest.TestCase):
                 token_emails="first@hotmail.com----tok_first\nsecond@hotmail.com----tok_second",
                 token_mode=True,
             )
+            mailbox._client.user.check_token_alive.return_value = types.SimpleNamespace(
+                alive=True,
+                email_address="first@hotmail.com",
+            )
 
             account = mailbox.get_email()
 
@@ -114,6 +118,7 @@ class LuckMailMailboxTests(unittest.TestCase):
                 "second@hotmail.com----tok_second",
             )
             mock_client_cls.assert_called_once()
+            mailbox._client.user.check_token_alive.assert_called_once_with("tok_first")
 
     def test_parse_luckmail_token_pool_rejects_invalid_line(self):
         with self.assertRaisesRegex(RuntimeError, "LuckMail\\(token\\)"):
@@ -228,6 +233,7 @@ class LuckMailMailboxTests(unittest.TestCase):
         mailbox = self._build_mailbox()
         mailbox._token = None
         mailbox._ensure_result_tags = mock.Mock()
+        mailbox._ensure_token_alive = mock.Mock()
         mailbox._client.user.purchase_emails.return_value = {
             "purchases": [
                 {
@@ -241,10 +247,39 @@ class LuckMailMailboxTests(unittest.TestCase):
         account = mailbox.get_email()
 
         mailbox._ensure_result_tags.assert_called_once_with()
+        mailbox._ensure_token_alive.assert_called_once_with(
+            "tok_fresh",
+            "fresh@example.com",
+        )
         self.assertEqual(mailbox._purchase_id, 123)
         self.assertEqual(account.email, "fresh@example.com")
         self.assertEqual(account.account_id, "tok_fresh")
         self.assertEqual(account.extra.get("purchase_id"), 123)
+
+    def test_ensure_token_alive_raises_when_mailbox_is_unavailable(self):
+        mailbox = self._build_mailbox()
+        mailbox._client.user.check_token_alive.return_value = types.SimpleNamespace(
+            alive=False,
+            status="failed",
+            message="token invalid",
+            email_address="demo@example.com",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "LuckMail 邮箱不可用: token invalid"):
+            mailbox._ensure_token_alive("tok_demo", "demo@example.com")
+
+    def test_ensure_token_alive_logs_when_mailbox_is_available(self):
+        mailbox = self._build_mailbox()
+        mailbox._log_fn = mock.Mock()
+        mailbox._client.user.check_token_alive.return_value = types.SimpleNamespace(
+            alive=True,
+            email_address="demo@example.com",
+        )
+
+        mailbox._ensure_token_alive("tok_demo", "demo@example.com")
+
+        mailbox._client.user.check_token_alive.assert_called_once_with("tok_demo")
+        mailbox._log_fn.assert_called()
 
 
 if __name__ == "__main__":
