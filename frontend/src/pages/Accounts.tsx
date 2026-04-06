@@ -15,6 +15,7 @@ import {
   Dropdown,
   Typography,
   Alert,
+  DatePicker,
   theme,
 } from 'antd'
 import type { MenuProps } from 'antd'
@@ -526,6 +527,8 @@ export default function Accounts() {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [createdAtStart, setCreatedAtStart] = useState('')
+  const [createdAtEnd, setCreatedAtEnd] = useState('')
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
   const [registerModalOpen, setRegisterModalOpen] = useState(false)
@@ -559,18 +562,27 @@ export default function Accounts() {
   }, [detailModalOpen, currentAccount, detailForm])
 
   const load = useCallback(async () => {
+    if (createdAtStart && createdAtEnd && new Date(createdAtStart).getTime() > new Date(createdAtEnd).getTime()) {
+      message.warning('开始时间不能晚于结束时间')
+      setAccounts([])
+      setTotal(0)
+      return
+    }
+
     setLoading(true)
     try {
       const params = new URLSearchParams({ platform: currentPlatform, page: '1', page_size: '100' })
       if (search) params.set('email', search)
       if (filterStatus) params.set('status', filterStatus)
+      if (createdAtStart) params.set('created_at_start', createdAtStart)
+      if (createdAtEnd) params.set('created_at_end', createdAtEnd)
       const data = await apiFetch(`/accounts?${params}`)
       setAccounts((data.items || []).map(normalizeAccount))
       setTotal(data.total)
     } finally {
       setLoading(false)
     }
-  }, [currentPlatform, search, filterStatus])
+  }, [currentPlatform, search, filterStatus, createdAtStart, createdAtEnd])
 
   useEffect(() => {
     load()
@@ -590,22 +602,79 @@ export default function Accounts() {
   const getRefreshToken = (record: any): string => {
     try {
       const extra = JSON.parse(record.extra_json || '{}')
-      return extra.refresh_token || ''
+      return extra.refresh_token || extra.refreshToken || ''
     } catch {
       return ''
     }
   }
 
   const exportCsv = () => {
-    const header = 'email,password,status,region,cashier_url,created_at'
-    const rows = accounts.map((a) => [a.email, a.password, a.status, a.region, a.cashier_url, a.created_at].join(','))
-    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${currentPlatform}_accounts.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    const quoteCsv = (value: any) => {
+      const text = value == null ? '' : String(value)
+      return `"${text.replace(/"/g, '""')}"`
+    }
+
+    const downloadCsv = (content: string) => {
+      const blob = new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${currentPlatform}_accounts.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
+    if (currentPlatform === 'kiro') {
+      const header = ['邮箱', '昵称', '登录方式', 'RefreshToken', 'ClientId', 'ClientSecret', 'Region']
+      const rows = accounts.map((a) => {
+        const nickname = a.extra?.name || String(a.email || '').split('@')[0] || ''
+        const provider = a.extra?.provider || 'BuilderId'
+        const refreshToken = a.extra?.refreshToken || ''
+        const clientId = a.extra?.clientId || ''
+        const clientSecret = a.extra?.clientSecret || ''
+        const region = a.extra?.region || 'us-east-1'
+
+        return [
+          a.email || '',
+          nickname,
+          provider,
+          refreshToken,
+          clientId,
+          clientSecret,
+          region,
+        ].map(quoteCsv).join(',')
+      })
+
+      downloadCsv([header.map(quoteCsv).join(','), ...rows].join('\r\n'))
+      return
+    }
+
+    const header = ['email', 'password', 'status', 'region', 'cashier_url', 'created_at']
+    if (currentPlatform === 'kiro') {
+      header.push('accessToken', 'refreshToken', 'clientId', 'clientSecret')
+    } else if (currentPlatform === 'chatgpt') {
+      header.push('token', 'refresh_token')
+    } else {
+      header.push('token')
+    }
+
+    const rows = accounts.map((a) => {
+      const baseRow = [a.email, a.password, a.status, a.region, a.cashier_url, a.created_at].map(quoteCsv)
+      if (currentPlatform === 'kiro') {
+        baseRow.push(quoteCsv(a.extra?.accessToken || a.extra?.webAccessToken || a.token))
+        baseRow.push(quoteCsv(a.extra?.refreshToken))
+        baseRow.push(quoteCsv(a.extra?.clientId))
+        baseRow.push(quoteCsv(a.extra?.clientSecret))
+      } else if (currentPlatform === 'chatgpt') {
+        baseRow.push(quoteCsv(a.token))
+        baseRow.push(quoteCsv(getRefreshToken(a)))
+      } else {
+        baseRow.push(quoteCsv(a.token))
+      }
+      return baseRow.join(',')
+    })
+
+    downloadCsv([header.map(quoteCsv).join(','), ...rows].join('\r\n'))
   }
 
   const handleDelete = async (id: number) => {
@@ -1201,6 +1270,18 @@ export default function Accounts() {
               { value: 'invalid', label: '已失效' },
             ]}
           />
+          <DatePicker
+            showTime
+            allowClear
+            placeholder="开始时间"
+            onChange={(value) => setCreatedAtStart(value ? value.toISOString() : '')}
+          />
+          <DatePicker
+            showTime
+            allowClear
+            placeholder="结束时间"
+            onChange={(value) => setCreatedAtEnd(value ? value.toISOString() : '')}
+          />
           <Text type="secondary">{total} 个账号</Text>
           {selectedRowKeys.length > 0 && (
             <Text type="success">已选 {selectedRowKeys.length} 个</Text>
@@ -1421,6 +1502,12 @@ export default function Accounts() {
                 </div>
               )
             })()}
+            {currentPlatform === 'kiro' && currentAccount?.extra ? (
+              <DetailSection title="Kiro 客户端信息">
+                <SummaryField label="Client ID" value={currentAccount.extra?.clientId} code />
+                <SummaryField label="Client Secret" value={currentAccount.extra?.clientSecret} code />
+              </DetailSection>
+            ) : null}
             {currentPlatform === 'chatgpt' ? (
               <DetailSection title="本地真实状态">
                 {currentAccount.chatgptLocal && Object.keys(currentAccount.chatgptLocal).length > 0 ? (
