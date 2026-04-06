@@ -2826,14 +2826,20 @@ class LuckMailMailbox(BaseMailbox):
         token_mode: bool = False,
         proxy: str = None,
     ):
-        resolved_base_url = str(base_url or "https://mails.luckyous.com/").strip()
+        raw_base_url = str(base_url or "").strip()
+        resolved_base_url = raw_base_url or "https://mails.luckyous.com/"
+        raw_api_key = str(api_key or "").strip()
         self._token_pool_text = self._normalize_token_pool_text(token_emails)
         self._token_mode = bool(token_mode)
         if self._token_mode and not self._token_pool_text:
             raise RuntimeError(
                 "LuckMail(token) 未配置邮箱池，请在全局设置中填写 邮箱----token"
             )
-        if not self._token_pool_text and (not resolved_base_url or not api_key):
+        if self._token_mode and self._token_pool_text and not raw_base_url:
+            raise RuntimeError(
+                "LuckMail(token) 未配置：请在全局设置中填写 luckmail_base_url"
+            )
+        if not self._token_pool_text and (not raw_base_url or not raw_api_key):
             raise RuntimeError(
                 "LuckMail 未配置：请在全局设置中填写 luckmail_base_url 和 luckmail_api_key"
             )
@@ -2841,7 +2847,7 @@ class LuckMailMailbox(BaseMailbox):
 
         self._client = LuckMailClient(
             base_url=resolved_base_url,
-            api_key=api_key or "",
+            api_key=raw_api_key,
             proxy_url=proxy,
         )
         self._project_code = project_code

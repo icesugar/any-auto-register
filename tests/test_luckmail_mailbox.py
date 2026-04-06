@@ -119,6 +119,34 @@ class LuckMailMailboxTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "LuckMail\\(token\\)"):
             LuckMailMailbox._parse_token_pool_text("broken-line")
 
+    @mock.patch("core.luckmail.LuckMailClient")
+    def test_luckmail_token_mode_requires_explicit_base_url(self, _mock_client_cls):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "LuckMail\\(token\\) 未配置：请在全局设置中填写 luckmail_base_url",
+        ):
+            LuckMailMailbox(
+                base_url="",
+                api_key="",
+                token_emails="first@hotmail.com----tok_first",
+                token_mode=True,
+            )
+
+    @mock.patch("core.luckmail.LuckMailClient")
+    def test_luckmail_token_mode_allows_empty_api_key_when_base_url_is_present(
+        self,
+        mock_client_cls,
+    ):
+        mailbox = LuckMailMailbox(
+            base_url="https://mails.luckyous.com",
+            api_key="",
+            token_emails="first@hotmail.com----tok_first",
+            token_mode=True,
+        )
+
+        self.assertIsNotNone(mailbox)
+        self.assertEqual(mock_client_cls.call_args.kwargs.get("api_key"), "")
+
     def test_ensure_result_tags_creates_missing_tags(self):
         mailbox = self._build_mailbox()
         mailbox._client.user.get_tags.return_value = [
