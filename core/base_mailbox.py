@@ -2811,6 +2811,9 @@ class LuckMailMailbox(BaseMailbox):
     """LuckMail 混合模式：ChatGPT 走购买邮箱，其他平台走订单接码"""
 
     _TOKEN_POOL_CONFIG_KEY = "luckmail_token_emails"
+    _SUCCESS_TAG_NAME = "注册成功"
+    _FAILED_TAG_NAME = "注册失败"
+    _RESULT_TAG_LIMIT_TYPE = 0
 
     def __init__(
         self,
@@ -2845,6 +2848,8 @@ class LuckMailMailbox(BaseMailbox):
         self._email_type = email_type or None
         self._domain = domain or None
         self._order_no = None
+        self._purchase_id = 0
+        self._result_tag_ids: dict[str, int] = {}
         self._token = None
         self._email = None
         self._base_url = resolved_base_url
@@ -2914,6 +2919,7 @@ class LuckMailMailbox(BaseMailbox):
 
         self._email = email
         self._token = token
+        self._purchase_id = 0
         self._log(f"[LuckMail(token)] 从邮箱池取出: {email}")
         return MailboxAccount(
             email=email,
@@ -2972,6 +2978,79 @@ class LuckMailMailbox(BaseMailbox):
         except Exception:
             pass
 
+    def _should_manage_result_tags(self) -> bool:
+        return not self._token_mode and not self._has_token_pool()
+
+    def _ensure_result_tags(self) -> dict[str, int]:
+        if not self._should_manage_result_tags():
+            return {}
+
+        tag_names = (self._SUCCESS_TAG_NAME, self._FAILED_TAG_NAME)
+        if all(self._result_tag_ids.get(name) for name in tag_names):
+            return dict(self._result_tag_ids)
+
+        try:
+            existing_tags = self._client.user.get_tags() or []
+        except Exception as e:
+            raise RuntimeError(f"LuckMail 获取标签列表失败: {e}") from e
+
+        resolved: dict[str, int] = {}
+        for item in existing_tags:
+            name = str(getattr(item, "name", "") or "").strip()
+            if name not in tag_names:
+                continue
+            try:
+                tag_id = int(getattr(item, "id", 0) or 0)
+            except (TypeError, ValueError):
+                tag_id = 0
+            if tag_id > 0:
+                resolved[name] = tag_id
+
+        for name in tag_names:
+            if resolved.get(name):
+                continue
+            self._log(f"[LuckMail] 检测到缺少标签，自动创建: {name}")
+            try:
+                created = self._client.user.create_tag(
+                    name=name,
+                    limit_type=self._RESULT_TAG_LIMIT_TYPE,
+                )
+            except Exception as e:
+                raise RuntimeError(f"LuckMail 创建标签失败({name}): {e}") from e
+
+            try:
+                tag_id = int(getattr(created, "id", 0) or 0)
+            except (TypeError, ValueError):
+                tag_id = 0
+            if tag_id <= 0:
+                raise RuntimeError(f"LuckMail 创建标签失败({name}): 未返回 tag_id")
+            resolved[name] = tag_id
+
+        self._result_tag_ids = resolved
+        self._log("[LuckMail] 已初始化结果标签: 注册成功 / 注册失败")
+        return dict(self._result_tag_ids)
+
+    def mark_purchase_result_tag(self, purchase_id: int, success: bool) -> None:
+        if not self._should_manage_result_tags():
+            return
+
+        try:
+            resolved_purchase_id = int(purchase_id or 0)
+        except (TypeError, ValueError):
+            resolved_purchase_id = 0
+        if resolved_purchase_id <= 0:
+            return
+
+        self._ensure_result_tags()
+        tag_name = self._SUCCESS_TAG_NAME if success else self._FAILED_TAG_NAME
+        self._client.user.set_purchase_tag(
+            resolved_purchase_id,
+            tag_name=tag_name,
+        )
+        self._log(
+            f"[LuckMail] 已回写已购邮箱标签: purchase_id={resolved_purchase_id}, tag={tag_name}"
+        )
+
     def _extract_code_from_token_mails(
         self,
         token: str,
@@ -3012,6 +3091,7 @@ class LuckMailMailbox(BaseMailbox):
             raise RuntimeError("LuckMail 未设置 project_code，无法创建邮箱")
 
         if self._use_purchase_mode():
+            self._ensure_result_tags()
             self._log(
                 f"[LuckMail] 分支: ChatGPT + LuckMail -> 购买邮箱接口 "
                 f"(project_code={self._project_code}, email_type={self._email_type or '-'}, domain={self._domain or '-'})"
@@ -3036,6 +3116,10 @@ class LuckMailMailbox(BaseMailbox):
             if not email or not token:
                 raise RuntimeError(f"LuckMail 返回缺少 email/token: {item}")
 
+            try:
+                self._purchase_id = int(item.get("id") or 0)
+            except (TypeError, ValueError):
+                self._purchase_id = 0
             self._email = email
             self._token = token
             self._log(f"[LuckMail] 已购邮箱: {email}")
@@ -3048,6 +3132,7 @@ class LuckMailMailbox(BaseMailbox):
                     "provider": "luckmail",
                     "token": token,
                     "project_code": self._project_code,
+                    "purchase_id": self._purchase_id,
                 },
             )
 
@@ -3063,6 +3148,7 @@ class LuckMailMailbox(BaseMailbox):
         except Exception as e:
             raise RuntimeError(f"LuckMail 创建订单失败: {e}") from e
         self._order_no = order.order_no
+        self._purchase_id = 0
         email = order.email_address
         self._email = email
         self._log(f"[LuckMail] 订单 {order.order_no} 分配邮箱: {email}")

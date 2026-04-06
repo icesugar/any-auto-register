@@ -204,8 +204,26 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
             nonlocal next_start_time
             proxy_pool = None
             _proxy = None
+            _mailbox = None
+            mail_provider = ""
             current_email = req.email or ""
             attempt_id: int | None = None
+
+            def _mark_luckmail_result(success: bool) -> None:
+                if mail_provider != "luckmail" or _mailbox is None:
+                    return
+                purchase_id = getattr(_mailbox, "_purchase_id", 0)
+                if not purchase_id:
+                    return
+                mark_fn = getattr(_mailbox, "mark_purchase_result_tag", None)
+                if not callable(mark_fn):
+                    return
+                try:
+                    mark_fn(purchase_id, success=success)
+                except Exception as tag_error:
+                    tag_name = "注册成功" if success else "注册失败"
+                    _log(task_id, f"[LuckMail] 回写标签失败({tag_name}): {tag_error}")
+
             try:
                 from core.proxy_pool import proxy_pool
 
@@ -238,6 +256,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 merged_extra.update(
                     {k: v for k, v in req.extra.items() if v is not None and v != ""}
                 )
+                mail_provider = merged_extra.get("mail_provider", "")
 
                 _config = RegisterConfig(
                     executor_type=req.executor_type,
@@ -263,10 +282,12 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 )
                 current_email = account.email or current_email
                 if isinstance(account.extra, dict):
-                    mail_provider = merged_extra.get("mail_provider", "")
                     if mail_provider:
                         account.extra.setdefault("mail_provider", mail_provider)
                     if mail_provider in {"luckmail", "luckmail_token"} and req.platform == "chatgpt":
+                        purchase_id = getattr(_mailbox, "_purchase_id", 0) or 0
+                        if purchase_id:
+                            account.extra.setdefault("purchase_id", purchase_id)
                         mailbox_token = getattr(_mailbox, "_token", "") or ""
                         if mailbox_token:
                             account.extra.setdefault("mailbox_token", mailbox_token)
@@ -299,6 +320,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 if cashier_url:
                     _log(task_id, f"  [升级链接] {cashier_url}")
                     _task_store.add_cashier_url(task_id, cashier_url)
+                _mark_luckmail_result(success=True)
                 return AttemptResult.success()
             except SkipCurrentAttemptRequested as e:
                 _log(task_id, f"[SKIP] 已跳过当前账号: {e}")
@@ -316,6 +338,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 if _proxy and proxy_pool is not None:
                     proxy_pool.report_fail(_proxy)
                 _log(task_id, f"[FAIL] 注册失败: {e}")
+                _mark_luckmail_result(success=False)
                 _save_task_log(
                     req.platform,
                     current_email,

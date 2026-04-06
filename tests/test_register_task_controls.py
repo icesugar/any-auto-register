@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from api.tasks import RegisterTaskRequest, _create_task_record, _run_register, _task_store
 from core.base_mailbox import BaseMailbox, MailboxAccount
@@ -53,6 +53,37 @@ class _FakePlatform(BasePlatform):
         return True
 
 
+class _FakeLuckMailMailbox(_FakeMailbox):
+    def __init__(self):
+        self._purchase_id = 321
+        self._token = "tok_demo"
+        self.mark_purchase_result_tag = Mock()
+
+    def get_email(self) -> MailboxAccount:
+        return MailboxAccount(
+            email="demo@example.com",
+            account_id="tok_demo",
+            extra={"purchase_id": self._purchase_id},
+        )
+
+
+class _FakeLuckMailSuccessPlatform(_FakePlatform):
+    def register(self, email: str, password: str = None) -> Account:
+        account = self.mailbox.get_email()
+        return Account(
+            platform="fake",
+            email=account.email,
+            password=password or "pw",
+            extra={},
+        )
+
+
+class _FakeLuckMailFailPlatform(_FakePlatform):
+    def register(self, email: str, password: str = None) -> Account:
+        account = self.mailbox.get_email()
+        raise RuntimeError(f"register failed for {account.email}")
+
+
 class RegisterTaskControlFlowTests(unittest.TestCase):
     def _build_request(self):
         return RegisterTaskRequest(
@@ -96,6 +127,86 @@ class RegisterTaskControlFlowTests(unittest.TestCase):
         self.assertEqual(snapshot["success"], 0)
         self.assertEqual(snapshot["skipped"], 0)
         self.assertEqual(snapshot["errors"], [])
+
+    def test_luckmail_success_marks_purchase_tag(self):
+        req = RegisterTaskRequest(
+            platform="fake",
+            count=1,
+            concurrency=1,
+            proxy="http://proxy.local:8080",
+            extra={"mail_provider": "luckmail"},
+        )
+        task_id = "task-luckmail-success"
+        mailbox = _FakeLuckMailMailbox()
+        proxy_pool = Mock()
+        config_store = Mock()
+        config_store.get_all.return_value = {}
+        _create_task_record(task_id, req, "manual", None)
+
+        with (
+            patch("core.registry.get", return_value=_FakeLuckMailSuccessPlatform),
+            patch("core.config_store.config_store", config_store),
+            patch("core.proxy_pool.proxy_pool", proxy_pool),
+            patch("core.base_mailbox.create_mailbox", return_value=mailbox),
+            patch("core.db.save_account", side_effect=lambda account: account),
+            patch("api.tasks._save_task_log"),
+        ):
+            _run_register(task_id, req)
+
+        mailbox.mark_purchase_result_tag.assert_called_once_with(321, success=True)
+
+    def test_luckmail_failure_marks_purchase_tag(self):
+        req = RegisterTaskRequest(
+            platform="fake",
+            count=1,
+            concurrency=1,
+            proxy="http://proxy.local:8080",
+            extra={"mail_provider": "luckmail"},
+        )
+        task_id = "task-luckmail-failed"
+        mailbox = _FakeLuckMailMailbox()
+        proxy_pool = Mock()
+        config_store = Mock()
+        config_store.get_all.return_value = {}
+        _create_task_record(task_id, req, "manual", None)
+
+        with (
+            patch("core.registry.get", return_value=_FakeLuckMailFailPlatform),
+            patch("core.config_store.config_store", config_store),
+            patch("core.proxy_pool.proxy_pool", proxy_pool),
+            patch("core.base_mailbox.create_mailbox", return_value=mailbox),
+            patch("api.tasks._save_task_log"),
+        ):
+            _run_register(task_id, req)
+
+        mailbox.mark_purchase_result_tag.assert_called_once_with(321, success=False)
+
+    def test_luckmail_token_mode_does_not_mark_purchase_tag(self):
+        req = RegisterTaskRequest(
+            platform="fake",
+            count=1,
+            concurrency=1,
+            proxy="http://proxy.local:8080",
+            extra={"mail_provider": "luckmail_token"},
+        )
+        task_id = "task-luckmail-token"
+        mailbox = _FakeLuckMailMailbox()
+        proxy_pool = Mock()
+        config_store = Mock()
+        config_store.get_all.return_value = {}
+        _create_task_record(task_id, req, "manual", None)
+
+        with (
+            patch("core.registry.get", return_value=_FakeLuckMailSuccessPlatform),
+            patch("core.config_store.config_store", config_store),
+            patch("core.proxy_pool.proxy_pool", proxy_pool),
+            patch("core.base_mailbox.create_mailbox", return_value=mailbox),
+            patch("core.db.save_account", side_effect=lambda account: account),
+            patch("api.tasks._save_task_log"),
+        ):
+            _run_register(task_id, req)
+
+        mailbox.mark_purchase_result_tag.assert_not_called()
 
 
 if __name__ == "__main__":

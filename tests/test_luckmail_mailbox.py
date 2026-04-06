@@ -14,8 +14,13 @@ class LuckMailMailboxTests(unittest.TestCase):
         mailbox._email_type = None
         mailbox._domain = None
         mailbox._order_no = None
+        mailbox._purchase_id = 0
+        mailbox._result_tag_ids = {}
+        mailbox._token_mode = False
+        mailbox._token_pool_text = ""
         mailbox._token = "tok_demo"
         mailbox._email = "demo@example.com"
+        mailbox._base_url = "https://mails.luckyous.com"
         mailbox._log_fn = None
         return mailbox
 
@@ -113,6 +118,105 @@ class LuckMailMailboxTests(unittest.TestCase):
     def test_parse_luckmail_token_pool_rejects_invalid_line(self):
         with self.assertRaisesRegex(RuntimeError, "LuckMail\\(token\\)"):
             LuckMailMailbox._parse_token_pool_text("broken-line")
+
+    def test_ensure_result_tags_creates_missing_tags(self):
+        mailbox = self._build_mailbox()
+        mailbox._client.user.get_tags.return_value = [
+            types.SimpleNamespace(id=7, name="其他标签"),
+        ]
+        mailbox._client.user.create_tag.side_effect = [
+            types.SimpleNamespace(id=11, name="注册成功"),
+            types.SimpleNamespace(id=12, name="注册失败"),
+        ]
+
+        result = mailbox._ensure_result_tags()
+
+        self.assertEqual(
+            result,
+            {
+                "注册成功": 11,
+                "注册失败": 12,
+            },
+        )
+        self.assertEqual(mailbox._client.user.create_tag.call_count, 2)
+        mailbox._client.user.create_tag.assert_any_call(
+            name="注册成功",
+            limit_type=0,
+        )
+        mailbox._client.user.create_tag.assert_any_call(
+            name="注册失败",
+            limit_type=0,
+        )
+
+    def test_ensure_result_tags_reuses_existing_tags(self):
+        mailbox = self._build_mailbox()
+        mailbox._client.user.get_tags.return_value = [
+            types.SimpleNamespace(id=21, name="注册成功"),
+            types.SimpleNamespace(id=22, name="注册失败"),
+        ]
+
+        result = mailbox._ensure_result_tags()
+
+        self.assertEqual(
+            result,
+            {
+                "注册成功": 21,
+                "注册失败": 22,
+            },
+        )
+        mailbox._client.user.create_tag.assert_not_called()
+
+    def test_mark_purchase_result_tag_sets_expected_tag_name(self):
+        mailbox = self._build_mailbox()
+        mailbox._result_tag_ids = {
+            "注册成功": 31,
+            "注册失败": 32,
+        }
+
+        mailbox.mark_purchase_result_tag(123, success=True)
+        mailbox.mark_purchase_result_tag(456, success=False)
+
+        self.assertEqual(mailbox._client.user.set_purchase_tag.call_count, 2)
+        mailbox._client.user.set_purchase_tag.assert_any_call(
+            123,
+            tag_name="注册成功",
+        )
+        mailbox._client.user.set_purchase_tag.assert_any_call(
+            456,
+            tag_name="注册失败",
+        )
+
+    def test_mark_purchase_result_tag_skips_token_mode(self):
+        mailbox = self._build_mailbox()
+        mailbox._token_mode = True
+
+        mailbox.mark_purchase_result_tag(123, success=True)
+
+        mailbox._client.user.get_tags.assert_not_called()
+        mailbox._client.user.create_tag.assert_not_called()
+        mailbox._client.user.set_purchase_tag.assert_not_called()
+
+    def test_get_email_purchase_mode_stores_purchase_id_and_initializes_tags(self):
+        mailbox = self._build_mailbox()
+        mailbox._token = None
+        mailbox._ensure_result_tags = mock.Mock()
+        mailbox._client.user.purchase_emails.return_value = {
+            "purchases": [
+                {
+                    "id": 123,
+                    "email_address": "fresh@example.com",
+                    "token": "tok_fresh",
+                }
+            ]
+        }
+
+        account = mailbox.get_email()
+
+        mailbox._ensure_result_tags.assert_called_once_with()
+        self.assertEqual(mailbox._purchase_id, 123)
+        self.assertEqual(account.email, "fresh@example.com")
+        self.assertEqual(account.account_id, "tok_fresh")
+        self.assertEqual(account.extra.get("purchase_id"), 123)
 
 
 if __name__ == "__main__":
