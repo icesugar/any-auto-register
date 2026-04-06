@@ -9,6 +9,7 @@ import {
   Checkbox,
   Tag,
   Space,
+  Alert,
   Typography,
   Descriptions,
 } from 'antd'
@@ -97,6 +98,7 @@ export default function RegisterTaskPage() {
         luckmail_api_key: cfg.luckmail_api_key || '',
         luckmail_email_type: cfg.luckmail_email_type || '',
         luckmail_domain: cfg.luckmail_domain || '',
+        luckmail_token_emails: cfg.luckmail_token_emails || '',
       })
     })
   }, [form])
@@ -159,6 +161,7 @@ export default function RegisterTaskPage() {
       luckmail_api_key: values.luckmail_api_key,
       luckmail_email_type: values.luckmail_email_type,
       luckmail_domain: values.luckmail_domain,
+      luckmail_token_emails: values.luckmail_token_emails,
       yescaptcha_key: values.yescaptcha_key,
       solver_url: values.solver_url,
     }
@@ -292,6 +295,14 @@ export default function RegisterTaskPage() {
               />
             </Form.Item>
           )}
+          {mailProvider === 'luckmail_token' && (
+            <Alert
+              type="info"
+              showIcon
+              message="LuckMail(token) 使用说明"
+              description="该模式直接消费全局配置里的 邮箱----token 池，不需要再填写 API Key、邮箱类型或域名。请先到“全局配置 -> 邮箱服务 -> LuckMail(token)”中维护邮箱池。"
+            />
+          )}
         </Card>
 
         <Card title="邮箱配置" style={{ marginBottom: 16 }}>
@@ -299,6 +310,7 @@ export default function RegisterTaskPage() {
             <Select
               options={[
                 { value: 'luckmail', label: 'LuckMail' },
+                { value: 'luckmail_token', label: 'LuckMail(token)' },
                 { value: 'applemail', label: 'AppleMail / 小苹果' },
                 { value: 'moemail', label: 'MoeMail (sall.cc)' },
                 { value: 'tempmail_lol', label: 'TempMail.lol' },

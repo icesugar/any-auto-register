@@ -71,6 +71,7 @@ CONFIG_KEYS = [
     "luckmail_api_key",
     "luckmail_email_type",
     "luckmail_domain",
+    "luckmail_token_emails",
     "cpa_enabled",
     "cpa_api_url",
     "cpa_api_key",

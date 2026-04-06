@@ -11,6 +11,9 @@ from typing import Optional, Any, Callable
 from .proxy_utils import build_requests_proxy_config
 
 
+_LUCKMAIL_TOKEN_POOL_LOCK = threading.Lock()
+
+
 @dataclass
 class MailboxAccount:
     email: str
@@ -363,6 +366,14 @@ def create_mailbox(
             project_code=extra.get("luckmail_project_code", ""),
             email_type=extra.get("luckmail_email_type", ""),
             domain=extra.get("luckmail_domain", ""),
+            proxy=proxy,
+        )
+    elif provider == "luckmail_token":
+        return LuckMailMailbox(
+            base_url=extra.get("luckmail_base_url") or "https://mails.luckyous.com/",
+            api_key=extra.get("luckmail_api_key", ""),
+            token_emails=extra.get("luckmail_token_emails", ""),
+            token_mode=True,
             proxy=proxy,
         )
     elif provider == "outlook":
@@ -2799,6 +2810,8 @@ class MoeMailMailbox(BaseMailbox):
 class LuckMailMailbox(BaseMailbox):
     """LuckMail 混合模式：ChatGPT 走购买邮箱，其他平台走订单接码"""
 
+    _TOKEN_POOL_CONFIG_KEY = "luckmail_token_emails"
+
     def __init__(
         self,
         base_url: str,
@@ -2806,17 +2819,26 @@ class LuckMailMailbox(BaseMailbox):
         project_code: str = "",
         email_type: str = "",
         domain: str = "",
+        token_emails: str = "",
+        token_mode: bool = False,
         proxy: str = None,
     ):
-        if not base_url or not api_key:
+        resolved_base_url = str(base_url or "https://mails.luckyous.com/").strip()
+        self._token_pool_text = self._normalize_token_pool_text(token_emails)
+        self._token_mode = bool(token_mode)
+        if self._token_mode and not self._token_pool_text:
+            raise RuntimeError(
+                "LuckMail(token) 未配置邮箱池，请在全局设置中填写 邮箱----token"
+            )
+        if not self._token_pool_text and (not resolved_base_url or not api_key):
             raise RuntimeError(
                 "LuckMail 未配置：请在全局设置中填写 luckmail_base_url 和 luckmail_api_key"
             )
         from .luckmail import LuckMailClient
 
         self._client = LuckMailClient(
-            base_url=base_url,
-            api_key=api_key,
+            base_url=resolved_base_url,
+            api_key=api_key or "",
             proxy_url=proxy,
         )
         self._project_code = project_code
@@ -2825,6 +2847,83 @@ class LuckMailMailbox(BaseMailbox):
         self._order_no = None
         self._token = None
         self._email = None
+        self._base_url = resolved_base_url
+
+    @staticmethod
+    def _normalize_token_pool_text(value: Any) -> str:
+        text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        return text.lstrip("\ufeff").strip()
+
+    @classmethod
+    def _parse_token_pool_text(cls, value: Any) -> list[tuple[str, str]]:
+        text = cls._normalize_token_pool_text(value)
+        if not text:
+            return []
+
+        entries: list[tuple[str, str]] = []
+        for index, raw_line in enumerate(text.split("\n"), start=1):
+            line = str(raw_line or "").strip()
+            if not line:
+                continue
+
+            parts = [part.strip() for part in line.split("----")]
+            if len(parts) != 2:
+                raise RuntimeError(
+                    f"LuckMail(token) 第 {index} 行格式错误，应为 邮箱----tok_xxx"
+                )
+
+            email, token = parts
+            if "@" not in email:
+                raise RuntimeError(
+                    f"LuckMail(token) 第 {index} 行邮箱格式不正确: {email}"
+                )
+            if not token.startswith("tok_"):
+                raise RuntimeError(
+                    f"LuckMail(token) 第 {index} 行 token 格式不正确，必须以 tok_ 开头"
+                )
+
+            entries.append((email, token))
+
+        return entries
+
+    @classmethod
+    def _serialize_token_pool_entries(cls, entries: list[tuple[str, str]]) -> str:
+        return "\n".join(f"{email}----{token}" for email, token in entries)
+
+    def _has_token_pool(self) -> bool:
+        return bool(self._token_pool_text)
+
+    def _pop_token_pool_account(self) -> MailboxAccount:
+        from .config_store import config_store
+
+        with _LUCKMAIL_TOKEN_POOL_LOCK:
+            current_pool_text = config_store.get(
+                self._TOKEN_POOL_CONFIG_KEY,
+                self._token_pool_text,
+            )
+            entries = self._parse_token_pool_text(current_pool_text)
+            if not entries:
+                raise RuntimeError(
+                    "LuckMail(token) 邮箱池为空，请先在全局配置中填写 邮箱----token"
+                )
+
+            email, token = entries.pop(0)
+            remaining_text = self._serialize_token_pool_entries(entries)
+            config_store.set(self._TOKEN_POOL_CONFIG_KEY, remaining_text)
+            self._token_pool_text = remaining_text
+
+        self._email = email
+        self._token = token
+        self._log(f"[LuckMail(token)] 从邮箱池取出: {email}")
+        return MailboxAccount(
+            email=email,
+            account_id=token,
+            extra={
+                "provider": "luckmail_token",
+                "token": token,
+                "luckmail_base_url": self._base_url,
+            },
+        )
 
     def _use_purchase_mode(self, account: MailboxAccount = None) -> bool:
         if (
@@ -2906,6 +3005,9 @@ class LuckMailMailbox(BaseMailbox):
         return None
 
     def get_email(self) -> MailboxAccount:
+        if self._has_token_pool():
+            return self._pop_token_pool_account()
+
         if not self._project_code:
             raise RuntimeError("LuckMail 未设置 project_code，无法创建邮箱")
 

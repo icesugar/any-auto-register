@@ -18,6 +18,7 @@ import { apiFetch } from '@/lib/utils'
 
 const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
   mail_provider: [
+    { label: 'LuckMail(token)', value: 'luckmail_token' },
     { label: 'LuckMail（订单接码 / 已购邮箱）', value: 'luckmail' },
     { label: 'Outlook（本地导入）', value: 'outlook' },
     { label: 'AppleMail（小苹果 / 本地邮箱池）', value: 'applemail' },
@@ -212,6 +213,19 @@ const TAB_ITEMS = [
           { key: 'luckmail_domain', label: '邮箱域名（可选）', placeholder: 'outlook.com / gmail.com' },
         ],
       },
+      {
+        title: 'LuckMail(token)',
+        desc: '直接使用已购邮箱 token 收码；每行一个邮箱，注册取号后会自动从池中移除',
+        fields: [
+          {
+            key: 'luckmail_token_emails',
+            label: '邮箱池',
+            type: 'textarea',
+            rows: 10,
+            placeholder: 'gqckyk42851m@hotmail.com----tok_19335a6875eae994592599d684e56ab3\nsecond@hotmail.com----tok_xxx',
+          },
+        ],
+      },
     ],
   },
   {
@@ -374,7 +388,8 @@ interface FieldConfig {
   key: string
   label: string
   placeholder?: string
-  type?: 'select' | 'input' | 'boolean'
+  type?: 'select' | 'input' | 'boolean' | 'textarea'
+  rows?: number
   secret?: boolean
 }
 
@@ -418,6 +433,7 @@ const MAILBOX_SECTION_FIELD_KEY_BY_PROVIDER: Record<string, string> = {
   duckmail: 'duckmail_api_url',
   cfworker: 'cfworker_api_url',
   luckmail: 'luckmail_base_url',
+  luckmail_token: 'luckmail_token_emails',
 }
 
 const MAILBOX_SECTION_INDEX_BY_PROVIDER: Record<string, number> = {
@@ -556,6 +572,7 @@ function ConfigField({ field }: { field: FieldConfig }) {
   const [showSecret, setShowSecret] = useState(false)
   const options = SELECT_FIELDS[field.key]
   const isBooleanField = field.type === 'boolean'
+  const isTextareaField = field.type === 'textarea'
   const helpText =
     field.key === 'default_executor'
       ? '仅对支持的平台生效；ChatGPT、Cursor、Grok、Kiro、Tavily、Trae 支持浏览器模式，OpenBlockLabs 仅支持纯协议。'
@@ -572,6 +589,12 @@ function ConfigField({ field }: { field: FieldConfig }) {
         <Select options={options} style={{ width: '100%' }} />
       ) : isBooleanField ? (
         <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+      ) : isTextareaField ? (
+        <Input.TextArea
+          placeholder={field.placeholder}
+          rows={field.rows || 8}
+          style={{ fontFamily: 'monospace' }}
+        />
       ) : field.secret ? (
         <Input.Password
           placeholder={field.placeholder}

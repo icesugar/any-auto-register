@@ -1,4 +1,5 @@
 import unittest
+import types
 from unittest import mock
 
 from core.base_mailbox import LuckMailMailbox, MailboxAccount, create_mailbox
@@ -79,6 +80,39 @@ class LuckMailMailboxTests(unittest.TestCase):
             mock_client_cls.call_args.kwargs.get("proxy_url"),
             "socks5://127.0.0.1:7890",
         )
+
+    @mock.patch("core.luckmail.LuckMailClient")
+    def test_luckmail_token_mode_pops_first_email_and_persists_remaining(
+        self,
+        mock_client_cls,
+    ):
+        mock_config_store = mock.Mock()
+        mock_config_store.get.return_value = (
+            "first@hotmail.com----tok_first\nsecond@hotmail.com----tok_second"
+        )
+
+        fake_config_module = types.SimpleNamespace(config_store=mock_config_store)
+        with mock.patch.dict("sys.modules", {"core.config_store": fake_config_module}):
+            mailbox = LuckMailMailbox(
+                base_url="https://mails.luckyous.com",
+                api_key="",
+                token_emails="first@hotmail.com----tok_first\nsecond@hotmail.com----tok_second",
+                token_mode=True,
+            )
+
+            account = mailbox.get_email()
+
+            self.assertEqual(account.email, "first@hotmail.com")
+            self.assertEqual(account.account_id, "tok_first")
+            mock_config_store.set.assert_called_once_with(
+                "luckmail_token_emails",
+                "second@hotmail.com----tok_second",
+            )
+            mock_client_cls.assert_called_once()
+
+    def test_parse_luckmail_token_pool_rejects_invalid_line(self):
+        with self.assertRaisesRegex(RuntimeError, "LuckMail\\(token\\)"):
+            LuckMailMailbox._parse_token_pool_text("broken-line")
 
 
 if __name__ == "__main__":
